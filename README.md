@@ -30,7 +30,7 @@ The Xingmeng M87 / Attack Shark M87 is a gasket-mounted, flex-cut ANSI TKL (87-k
 | **`Fn + 2`** | `M87_BT2` | Bluetooth Profile 2 *(Hold 3s to Pair)* |
 | **`Fn + 3`** | `M87_BT3` | Bluetooth Profile 3 *(Hold 3s to Pair)* |
 | **`Fn + 4`** | `M87_24G` | 2.4GHz RF Mode *(Hold 3s to Pair)* |
-| **`Fn + Backspace`** | `KEYLIGHT_TOGG` | **Toggle 87 Key LEDs** *(Leaves Side Strips & Logo ON)* |
+| **`Fn + Backspace`** | `KEYLIGHT_TOGG` | Toggle 87 Key LEDs |
 | **`Fn + Right Ctrl`** | `SIDELIGHT_TOGG` | Toggle Dual Side RGB Strips |
 | **`Fn + End`** | `LIGHTBAR_TOGG` | Toggle Logo Lightbar |
 | **`Fn + B` / `Fn + Alt`** | `BATTERY_LEVEL` | Display Battery Level on `1..0` Number Row |
@@ -90,24 +90,10 @@ The resulting binary will be generated at the repository root as `xingmeng_m87_d
 
 ---
 
-## Technical Pinout Reference
+## Hardware Specifications
 
-### Switch Matrix
-* **Diode Direction**: `COL2ROW`
-* **Rows (6)**: `D11, D10, D9, D8, D7, D6`
-* **Columns (17)**: `C12, C11, C10, C9, C8, C7, C6, C5, C4, C3, C2, C1, C0, C15, B15, B13, B12`
-
-### RGB Matrix & Strips
-* **18 Row Pins (R, B, G)**: `{ A8, A9, A10, A11, A12, A13, A14, A15, B0, B1, B2, B3, B4, B7, B8, D3, B14, B10 }`
-* **PWM Peripheral Outputs**:
-  * Pin 40 (`B6` - PWM Ch 22): Left Side RGB Strip (8 LEDs).
-  * Pin 43 (`B9` - PWM Ch 1): Right Side RGB Strip (8 LEDs).
-  * Pin 45 (`B11` - PWM Ch 3): Logo Lightbar (6 LEDs).
-
-### Wireless & Power Management
-* **Slide Switch**: Pin 24 (`A7` / `P0.7`) = Bluetooth, Pin 23 (`A6` / `P0.6`) = 2.4GHz RF.
-* **VBUS Detection**: Pin 19 (`A2` / `P0.2`) = 5V USB Sense (floating input).
-* **Indicators**: Pin 20 (`A3` / `P0.3`) = CapsLock LED, Pin 21 (`A4` / `P0.4`) = WinLock LED.
+For the comprehensive hardware teardown, full 64-pin MCU pinout mapping, switch matrix schematic, and wireless UART protocol specifications, see:
+* **[Complete Hardware Specification (docs/HARDWARE_SPEC.md)](docs/HARDWARE_SPEC.md)**
 
 ---
 
