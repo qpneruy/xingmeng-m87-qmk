@@ -47,6 +47,8 @@ The Xingmeng M87 / Attack Shark M87 is a gasket-mounted, flex-cut ANSI TKL (87-k
 
 ## Flashing Guide
 
+> **DISCLAIMER**: Flash this firmware entirely at your own risk. The author assumes no responsibility or liability for any hardware damage, malfunction, or bricked devices resulting from flashing or using this firmware.
+
 Flashing is performed using **[Sonix Flasher](https://github.com/SonixQMK/Sonix-Keyboard-Flasher)** (available for Linux and Windows):
 
 1. Put the keyboard into ISP Bootloader mode:

@@ -14,10 +14,10 @@ Complete Hardware Reverse-Engineering, Pinout, Matrix Schematic & Wireless UART 
 
 ### 1.1. Port Mapping: SONiX to ChibiOS HAL
 The SONiX SN32F240 architecture organizes I/O into four 16-bit ports, corresponding directly to Ports A, B, C, and D in ChibiOS HAL:
-* **Port 0** (`P0.0 .. P0.15`) $\longleftrightarrow$ **Port A** (`A0 .. A15`)
-* **Port 1** (`P1.0 .. P1.15`) $\longleftrightarrow$ **Port B** (`B0 .. B15`)
-* **Port 2** (`P2.0 .. P2.15`) $\longleftrightarrow$ **Port C** (`C0 .. C15`)
-* **Port 3** (`P3.0 .. P3.15`) $\longleftrightarrow$ **Port D** (`D0 .. D15`)
+* **Port 0** (`P0.0 .. P0.15`) <-> **Port A** (`A0 .. A15`)
+* **Port 1** (`P1.0 .. P1.15`) <-> **Port B** (`B0 .. B15`)
+* **Port 2** (`P2.0 .. P2.15`) <-> **Port C** (`C0 .. C15`)
+* **Port 3** (`P3.0 .. P3.15`) <-> **Port D** (`D0 .. D15`)
 
 ---
 
@@ -127,7 +127,7 @@ Input sense pins on Port D (`GPIO3`):
 ## 3. RGB LED Matrix & Underglow Strip Architecture
 
 ### 3.1. Multiplexing Architecture
-* **Common Anode**: 18 row color lines (6 physical rows $\times$ 3 colors: Red, Blue, Green) are driven high sequentially.
+* **Common Anode**: 18 row color lines (6 physical rows x 3 colors: Red, Blue, Green) are driven high sequentially.
 * **PWM Cathode Sinks**: Managed by 16-bit hardware timer `SN_CT16B1`. Includes 17 column channels for the 87 switch LEDs, plus 3 separate peripheral channels for the side and logo strips.
 
 ### 3.2. 18-Channel Row Color Pins (Anodes)
@@ -172,7 +172,7 @@ The three auxiliary strips share anode power lines with the main rows, but sink 
 
 ---
 
-## 5. Serial Communication Protocol: SN32F248B $\longleftrightarrow$ WCH CH582F
+## 5. Serial Communication Protocol: SN32F248B <-> WCH CH582F
 
 Communication between the main keyboard controller and the WCH CH582F wireless coprocessor is conducted over hardware serial interface **UART2**:
 
@@ -211,9 +211,12 @@ Communication between the main keyboard controller and the WCH CH582F wireless c
 
 ### 5.2. Packet Structure & Checksum
 All packets end with an 8-bit checksum:
-$$\text{Checksum} = \left(\sum_{i=0}^{N-2} \text{Byte}[i]\right) \ \& \ \text{0xFF}$$
+```c
+// Checksum is the 8-bit sum of all preceding bytes in the packet:
+checksum = (Byte[0] + Byte[1] + ... + Byte[N-2]) & 0xFF;
+```
 
-### 5.3. TX Commands (SN32F248B $\longrightarrow$ CH582F)
+### 5.3. TX Commands (SN32F248B -> CH582F)
 
 | Opcode | Length | Description | Payload Structure |
 | :---: | :---: | :--- | :--- |
@@ -232,7 +235,7 @@ $$\text{Checksum} = \left(\sum_{i=0}^{N-2} \text{Byte}[i]\right) \ \& \ \text{0x
 | **`0xA6`** | 3 B | Poll Battery Level | `[0xA6, 0x53 ('S'), 0xF9]` |
 | **`0x61`** | 3 B | Handshake ACK | `[0x61, 0x0D, 0x0A]` (`"a\r\n"`) |
 
-### 5.4. RX Reports (CH582F $\longrightarrow$ SN32F248B)
+### 5.4. RX Reports (CH582F -> SN32F248B)
 
 | Header | Param | Description | Meaning |
 | :---: | :---: | :--- | :--- |
@@ -240,7 +243,7 @@ $$\text{Checksum} = \left(\sum_{i=0}^{N-2} \text{Byte}[i]\right) \ \& \ \text{0x
 | **`0x5B` (`'['`)** | `0x31` | Link Pairing | Module in pairing discovery state |
 | **`0x5B` (`'['`)** | `0x33` / `0x42` | Link Disconnected | Host connection lost |
 | **`0x5A` (`'Z'`)** | `0x00 .. 0x07` | Host LED State | Bit 0 = NumLock, Bit 1 = CapsLock, Bit 2 = ScrollLock |
-| **`0x5C` (`'\'`)** | `0x00 .. 0x64` | Battery Level | Current charge percentage ($0\% .. 100\%$) |
+| **`0x5C` (`'\'`)** | `0x00 .. 0x64` | Battery Level | Current charge percentage (0% to 100%) |
 | **`0x61` (`'a'`)** | `0x0D, 0x0A` | Module ACK | Confirms successful command execution |
 
 ---
