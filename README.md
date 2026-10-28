@@ -5,9 +5,7 @@
 [![VIA Compatible](https://img.shields.io/badge/VIA-v3%20Compatible-green.svg)](https://usevia.app)
 [![Polling Rate](https://img.shields.io/badge/Polling%20Rate-500Hz%20(Native)-brightgreen.svg)](#)
 
-A streamlined, standalone QMK/VIA firmware repository dedicated exclusively to the **Xingmeng M87** (internationally marketed as **Attack Shark M87**) tri-mode mechanical keyboard.
-
-All other keyboard directories have been pruned from this repository to deliver a lightweight, single-keyboard workspace that compiles rapidly and supports VIA v3 out of the box.
+A streamlined, standalone firmware repository for the **Xingmeng M87** (Attack Shark M87) mechanical keyboard with full **QMK & VIA support**, **Tri-Mode wireless** (Bluetooth 5.3, 2.4GHz RF, Wired USB), and independent multi-zone RGB lighting.
 
 ---
 
@@ -20,33 +18,6 @@ The Xingmeng M87 / Attack Shark M87 is a gasket-mounted, flex-cut ANSI TKL (87-k
 * **USB Polling Rate**: Native **500Hz (2ms)** configured in the USB descriptor (`bInterval = 2`) for low latency without CPU starvation.
 * **Bootloader**: Hardware masked ROM ISP bootloader (`VID: 0x0C45, PID: 0x7040`).
 * **Normal Operating Mode**: `VID: 0x0C45, PID: 0x8006`.
-
----
-
-## Features
-
-### 1. Full Tri-Mode Wireless & Low-Latency Bridge
-* **Wired Mode**: Standard USB Type-C connection with full NKRO.
-* **Bluetooth 5.3**: Supports 3 distinct host profiles (`BT1`, `BT2`, `BT3`) with rapid switching and pairing.
-* **2.4GHz RF Dongle Mode**: Dedicated low-latency wireless connection.
-* **Hardware Optimizations**:
-  * Non-blocking boot state machine eliminates delays when plugging in the USB cable.
-  * Direct 32-bit register reads on Port 0 (`SN_GPIO0->DATA`) for single-cycle slide switch debouncing.
-  * Atomic status indicator register writes (`SN_GPIO0->BSET/BCLR`) prevent unnecessary bus transactions.
-  * De Bruijn bit-scanning table (`ctz_lut`) accelerates wireless NKRO-to-6KRO report conversions.
-
-### 2. Multi-Zone Independent Lighting Control
-* **87 Key Switch RGB Matrix**: Full QMK RGB Matrix animation suite.
-* **Independent Keylight Toggle (`Fn + Backspace`)**:
-  * Shuts down all 87 key switch LEDs completely by driving the 17 column PWM channels to 0%.
-  * **Leaves the side strips and logo lightbar running normally**, preserving ambient RGB glow while eliminating key glare.
-* **Dual Side Underglow Strips (`Fn + RCtrl`)**: Left and Right strips (`B6` and `B9`) with hardware color correction (mirrored from matrix edges with zero extra RAM overhead).
-* **Front Logo Lightbar (`Fn + End`)**: Dedicated toggleable lightbar on channel `B11`.
-* **Battery Level Meter (`Fn + B` / `Fn + LAlt` / `Fn + RAlt`)**: Displays remaining battery charge on number keys `1..0` (10% increments in Red/Orange/Green for 3 seconds).
-* **EEPROM Persistence**: Lighting and wireless states survive power cycles via wear-leveled flash emulation.
-
-### 3. VIA Support
-* Full support for VIA.
 
 ---
 
