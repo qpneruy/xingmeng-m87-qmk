@@ -76,7 +76,7 @@ The Xingmeng M87 / Attack Shark M87 is a gasket-mounted, flex-cut ANSI TKL (87-k
 
 ## Flashing Guide
 
-### Method A: Using Sonix Flasher (Linux / Windows)
+Using **Sonix Flasher** (Linux / Windows):
 
 1. Put the keyboard into ISP Bootloader mode:
    * **Software**: Press **`Fn + Esc`** while connected via USB.
@@ -87,7 +87,7 @@ The Xingmeng M87 / Attack Shark M87 is a gasket-mounted, flex-cut ANSI TKL (87-k
    ```
 3. Flash the pre-compiled VIA firmware:
    ```bash
-   ./sonixflasher -v 0c45/7040 -f keyboards/xingmeng_m87/xingmeng_m87_via.bin
+   ./sonixflasher -v 0c45/7040 -f firmware_binaries/xingmeng_m87_via.bin
    ```
 4. The flasher will verify checksums and reboot the keyboard into User Mode.
 
