@@ -45,9 +45,8 @@ The Xingmeng M87 / Attack Shark M87 is a gasket-mounted, flex-cut ANSI TKL (87-k
 * **Battery Level Meter (`Fn + B` / `Fn + LAlt` / `Fn + RAlt`)**: Displays remaining battery charge on number keys `1..0` (10% increments in Red/Orange/Green for 3 seconds).
 * **EEPROM Persistence**: Lighting and wireless states survive power cycles via wear-leveled flash emulation.
 
-### 3. Native VIA v3 Support
-* Pre-configured with `VIA_ENABLE = yes`.
-* Remap keys, configure layers, and tune RGB lighting on the fly via [usevia.app](https://usevia.app) using the included `xingmeng_m87_via.json`.
+### 3. VIA Support
+* Full support for VIA.
 
 ---
 
