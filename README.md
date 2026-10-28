@@ -51,19 +51,30 @@ The Xingmeng M87 / Attack Shark M87 is a gasket-mounted, flex-cut ANSI TKL (87-k
 
 Flashing is performed using **[Sonix Flasher](https://github.com/SonixQMK/SonixFlasherC)** (available for Linux and Windows):
 
-1. Put the keyboard into ISP Bootloader mode:
-   * Press **`Fn + Esc`** while connected via USB.
-   * *(Recovery)*: If recovering an unbootable device, short the hardware BOOT pin (`P2.2`, Pin 3) to GND while plugging in the USB cable.
-2. Verify that the device is detected (`VID: 0x0C45, PID: 0x7040`):
-   ```bash
-   ./sonixflasher -c
-   ```
-3. Flash the pre-compiled VIA firmware:
-   ```bash
-   ./sonixflasher -v 0c45/7040 -f firmware_binaries/xingmeng_m87_via.bin
-   ```
-4. The flasher will verify checksums and reboot the keyboard into User Mode.
+### 1. Put the Keyboard into Bootloader Mode
 
+The Sonix SN32F248B can be put into Bootloader mode by shorting the **BOOT** pin to ground (GND) before powering the board.
+
+The BOOT pin is located at **Pin 3** (see picture below). You will need to short this pin with GND, for example the USB connector housing.
+
+<p align="center">
+  <img src="docs/images/boot_pin.png" alt="BOOT pin 248b" width="400">
+</p>
+
+Grab a piece of wire and place one end on the BOOT pin and the other end on GND, then connect the board using its USB cable to your computer.
+
+You know it is in Bootloader mode if the board is connected to your PC, does not respond to keypresses, and the RGB/backlight is off.
+
+### 2. Verify Device Detection (`VID: 0x0C45, PID: 0x7040`)
+```bash
+./sonixflasher -c
+```
+
+### 3. Flash the Firmware
+```bash
+./sonixflasher -v 0c45/7040 -f firmware_binaries/xingmeng_m87_via.bin
+```
+The flasher will verify checksums and automatically reboot the keyboard into User Mode.
 ---
 
 ## Web Configuration via VIA

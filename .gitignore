@@ -87,6 +87,7 @@ tags
 *.jpg
 *.jpeg
 *.png
+!docs/images/*
 *.apng
 *.mng
 *.svg
