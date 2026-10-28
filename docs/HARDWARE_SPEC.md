@@ -12,6 +12,12 @@ Complete Hardware Reverse-Engineering, Pinout, Matrix Schematic & Wireless UART 
 
 ## 1. Hardware Architecture & MCU Pinout (LQFP-64)
 
+* **Official MCU Product Page**: [SONiX SN32F248B Product Page](https://www.sonix.com.tw/page/vg/SN32F248B?lang=1)
+
+<p align="center">
+  <img src="images/sn32f248bf_pinout.png" alt="SONiX SN32F248BF LQFP-64 Pinout Diagram" width="600">
+</p>
+
 ### 1.1. Port Mapping: SONiX to ChibiOS HAL
 The SONiX SN32F240 architecture organizes I/O into four 16-bit ports, corresponding directly to Ports A, B, C, and D in ChibiOS HAL:
 * **Port 0** (`P0.0 .. P0.15`) <-> **Port A** (`A0 .. A15`)
