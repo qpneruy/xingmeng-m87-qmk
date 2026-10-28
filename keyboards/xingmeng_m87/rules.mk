@@ -1,0 +1,3 @@
+EEPROM_ENABLE = yes
+VIA_ENABLE = yes
+SRC += ch582f.c

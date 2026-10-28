@@ -143,13 +143,8 @@ static void rgb_ch_ctrl(PWMConfig *cfg) {
         // Only P0.0 to P2.15 can be used as pwm output
         if (led_col_pins[i] > C15) continue;
 #        endif // SN32F2XX_PWM_CONTROL
-        /* We use a trick here, according to pfpa table of sn32f240b datasheet,
-           pwm channel and pfpa of pin Px.y can be calculated as below:
-             channel = (x*16+y)%24
-             pfpa = 1, when (x*16+y)>23
-        */
         uint8_t pio_value = ((uint32_t)(PAL_PORT(led_col_pins[i])) - (uint32_t)(PAL_PORT(A0))) / ((uint32_t)(PAL_PORT(B0)) - (uint32_t)(PAL_PORT(A0))) * PAL_IOPORTS_WIDTH + PAL_PAD(led_col_pins[i]);
-        uint8_t ch_idx    = pio_value % PWM_CHANNELS;
+        uint8_t ch_idx    = (pio_value >= PWM_CHANNELS) ? (pio_value - PWM_CHANNELS) : pio_value;
         chan_col_order[i] = ch_idx;
 #    elif (SN32F2XX_PWM_DIRECTION == ROW2COL)
     for (uint8_t i = 0; i < SN32F2XX_RGB_MATRIX_ROWS_HW; i++) {
@@ -157,20 +152,23 @@ static void rgb_ch_ctrl(PWMConfig *cfg) {
         // Only P0.0 to P2.15 can be used as pwm output
         if (led_row_pins[i] > C15) continue;
 #        endif // SN32F2XX_PWM_CONTROL
-        /* We use a trick here, according to pfpa table of sn32f240b datasheet,
-           pwm channel and pfpa of pin Px.y can be calculated as below:
-             channel = (x*16+y)%24
-             pfpa = 1, when (x*16+y)>23
-        */
         uint8_t pio_value = ((uint32_t)(PAL_PORT(led_row_pins[i])) - (uint32_t)(PAL_PORT(A0))) / ((uint32_t)(PAL_PORT(B0)) - (uint32_t)(PAL_PORT(A0))) * PAL_IOPORTS_WIDTH + PAL_PAD(led_row_pins[i]);
-        uint8_t ch_idx    = pio_value % PWM_CHANNELS;
+        uint8_t ch_idx    = (pio_value >= PWM_CHANNELS) ? (pio_value - PWM_CHANNELS) : pio_value;
         chan_row_order[i] = ch_idx;
-#    endif     // SN32F2XX_PWM_DIRECTION
+#    endif // SN32F2XX_PWM_DIRECTION
 #    if (SN32F2XX_PWM_CONTROL == HARDWARE_PWM)
         cfg->channels[ch_idx].pfpamsk = pio_value > (PWM_CHANNELS - 1);
         cfg->channels[ch_idx].mode    = SN32F2XX_PWM_OUTPUT_ACTIVE_LEVEL;
 #    endif // SN32F2XX_PWM_CONTROL
     }
+#if defined(XINGMENG_M87_STRIP_MIRROR)
+    cfg->channels[22].mode = SN32F2XX_PWM_OUTPUT_ACTIVE_LEVEL;
+    cfg->channels[22].pfpamsk = 0; // B6 (Left) is PA
+    cfg->channels[1].mode = SN32F2XX_PWM_OUTPUT_ACTIVE_LEVEL;
+    cfg->channels[1].pfpamsk = 1;  // B9 (Right) is PB
+    cfg->channels[3].mode = SN32F2XX_PWM_OUTPUT_ACTIVE_LEVEL;
+    cfg->channels[3].pfpamsk = 1;  // B11 (Logo) is PB
+#endif
 }
 #elif defined(SN32F260)
 /* PWM configuration structure. We use timer CT16B1 with 23 channels. */
@@ -358,24 +356,43 @@ static void shared_matrix_rgb_disable_output(void) {
         gpio_write_pin_high(led_row_pins[x]);
 #    endif // SN32F2XX_RGB_OUTPUT_ACTIVE_LEVEL
     }
+#if defined(XINGMENG_M87_STRIP_MIRROR)
+    pwmDisableChannel(&PWMD1, 22);
+    pwmDisableChannel(&PWMD1, 1);
+    pwmDisableChannel(&PWMD1, 3);
+    // Atomic single-cycle Port 1 HIGH cho B6 (P1.6), B9 (P1.9), B11 (P1.11)
+    SN_GPIO1->BSET = (1u << 6) | (1u << 9) | (1u << 11);
+#endif
 }
 
 static void update_pwm_channels(PWMDriver *pwmp) {
-    // Advance to the next LED RGB channels
-    current_row++;
-    /* Check if counter has wrapped around, reset before the next pass */
-    if (current_row == SN32F2XX_RGB_MATRIX_ROWS_HW) current_row = 0;
+#if defined(XINGMENG_M87_STRIP_MIRROR)
+    extern bool sidelight_enabled;
+    extern bool lightbar_enabled;
+    extern bool keylight_enabled;
+#endif
+    if (++current_row >= SN32F2XX_RGB_MATRIX_ROWS_HW) {
+        current_row = 0;
+    }
+
+    // Tính current_row % 3 bằng nhân nghịch đảo (0 phép chia, 4 chu kỳ CPU)
+    uint8_t row_ch = current_row - (uint8_t)(((uint16_t)(current_row * 86u) >> 8) * 3u);
+
 #    if defined(SHARED_MATRIX)
     uint8_t last_key_row = current_key_row;
 #    endif // SHARED_MATRIX
+
     // Advance to the next key matrix row
 #    if (SN32F2XX_PWM_CONTROL == HARDWARE_PWM)
-    if (current_row % SN32F2XX_RGB_MATRIX_ROW_CHANNELS == 2) current_key_row++;
+    if (row_ch == 2) current_key_row++;
 #    elif (SN32F2XX_PWM_CONTROL == SOFTWARE_PWM)
-    if (current_row % SN32F2XX_RGB_MATRIX_ROW_CHANNELS == 0) current_key_row++;
+    if (row_ch == 0) current_key_row++;
 #    endif // SN32F2XX_PWM_CONTROL
-    /* Check if counter has wrapped around, reset before the next pass */
-    if (current_key_row == SN32F2XX_RGB_MATRIX_ROWS) current_key_row = 0;
+
+    if (current_key_row >= SN32F2XX_RGB_MATRIX_ROWS) {
+        current_key_row = 0;
+    }
+
     // Disable LED output before scanning the key matrix
     if (current_key_row < ROWS_PER_HAND) {
         shared_matrix_rgb_disable_output();
@@ -383,47 +400,86 @@ static void update_pwm_channels(PWMDriver *pwmp) {
         shared_matrix_scan_keys(shared_matrix, current_key_row, last_key_row);
 #    endif // SHARED_MATRIX
     }
+
     bool enable_pwm_output = false;
+    const uint8_t *row_map = g_led_config.matrix_co[current_key_row];
+
     for (uint8_t current_key_col = 0; current_key_col < SN32F2XX_RGB_MATRIX_COLS; current_key_col++) {
-        uint8_t led_index = g_led_config.matrix_co[current_key_row][current_key_col];
-#    if (SN32F2XX_PWM_CONTROL == SOFTWARE_PWM)
-        if (led_index >= SN32F2XX_LED_COUNT) continue;
-#    endif // SN32F2XX_PWM_CONTROL
-        // Check if we need to enable RGB output
-        if (led_state[led_index].b > 0) enable_pwm_output |= true;
-        if (led_state[led_index].g > 0) enable_pwm_output |= true;
-        if (led_state[led_index].r > 0) enable_pwm_output |= true;
-        // Update matching RGB channel PWM configuration
-#    if (SN32F2XX_PWM_CONTROL == HARDWARE_PWM)
-        switch (current_row % SN32F2XX_RGB_MATRIX_ROW_CHANNELS) {
-            case 0:
-                pwmEnableChannel(pwmp, chan_col_order[current_key_col], led_state[led_index].b);
-                break;
-            case 1:
-                pwmEnableChannel(pwmp, chan_col_order[current_key_col], led_state[led_index].g);
-                break;
-            case 2:
-                pwmEnableChannel(pwmp, chan_col_order[current_key_col], led_state[led_index].r);
-                break;
-            default:;
-        }
-#    elif (SN32F2XX_PWM_CONTROL == SOFTWARE_PWM)
-        switch (current_row % SN32F2XX_RGB_MATRIX_ROW_CHANNELS) {
-            case 0:
-                led_duty_cycle[current_key_col] = led_state[led_index].r;
-                break;
-            case 1:
-                led_duty_cycle[current_key_col] = led_state[led_index].b;
-                break;
-            case 2:
-                led_duty_cycle[current_key_col] = led_state[led_index].g;
-                break;
-            default:;
-        }
+        uint8_t led_index = row_map[current_key_col];
+        if (led_index >= SN32F2XX_LED_COUNT) {
+#if (SN32F2XX_PWM_CONTROL == HARDWARE_PWM)
+            pwmEnableChannel(pwmp, chan_col_order[current_key_col], 0);
+#endif
+        } else {
+            RGB led = led_state[led_index];
+            if ((led.r | led.g | led.b) != 0) {
+                enable_pwm_output = true;
+            }
+
+#if (SN32F2XX_PWM_CONTROL == HARDWARE_PWM)
+            uint8_t duty = 0;
+#    if defined(XINGMENG_M87_STRIP_MIRROR)
+            if (keylight_enabled)
 #    endif
+            {
+                duty = (row_ch == 0) ? led.b : ((row_ch == 1) ? led.g : led.r);
+            }
+            pwmEnableChannel(pwmp, chan_col_order[current_key_col], duty);
+#elif (SN32F2XX_PWM_CONTROL == SOFTWARE_PWM)
+            led_duty_cycle[current_key_col] = (row_ch == 0) ? led.r : ((row_ch == 1) ? led.b : led.g);
+#endif
+        }
     }
+
+#if defined(XINGMENG_M87_STRIP_MIRROR)
+    if (sidelight_enabled) {
+        // 1. Left strip (B6 - Channel 22): Col 0, Red & Green swapped
+        uint8_t left_idx = row_map[0];
+        if (left_idx >= SN32F2XX_LED_COUNT) left_idx = 0;
+        RGB l_led = led_state[left_idx];
+        pwmEnableChannel(pwmp, 22, (row_ch == 0) ? l_led.b : ((row_ch == 1) ? l_led.r : l_led.g));
+
+        // 2. Right strip (B9 - Channel 1): Col 16, Red & Green swapped
+        uint8_t right_idx = row_map[16];
+        if (current_key_row == 4 || right_idx >= SN32F2XX_LED_COUNT) {
+            right_idx = (current_key_row == 3) ? g_led_config.matrix_co[3][13] : g_led_config.matrix_co[4][15];
+        }
+        if (right_idx < SN32F2XX_LED_COUNT) {
+            RGB r_led = led_state[right_idx];
+            pwmEnableChannel(pwmp, 1, (row_ch == 0) ? r_led.b : ((row_ch == 1) ? r_led.r : r_led.g));
+        } else {
+            pwmDisableChannel(pwmp, 1);
+            SN_GPIO1->BSET = (1u << 9);
+        }
+    } else {
+        pwmDisableChannel(pwmp, 22);
+        pwmDisableChannel(pwmp, 1);
+        SN_GPIO1->BSET = (1u << 6) | (1u << 9);
+    }
+
+    // 3. Logo strip (B11 - Channel 3): Normal RGB
+    if (lightbar_enabled) {
+        uint8_t logo_idx = (current_key_row <= 1) ? g_led_config.matrix_co[2][14] :
+                           ((current_key_row <= 3) ? g_led_config.matrix_co[2][15] : g_led_config.matrix_co[2][16]);
+        if (logo_idx < SN32F2XX_LED_COUNT) {
+            RGB lg_led = led_state[logo_idx];
+            pwmEnableChannel(pwmp, 3, (row_ch == 0) ? lg_led.b : ((row_ch == 1) ? lg_led.g : lg_led.r));
+        } else {
+            pwmDisableChannel(pwmp, 3);
+            SN_GPIO1->BSET = (1u << 11);
+        }
+    } else {
+        pwmDisableChannel(pwmp, 3);
+        SN_GPIO1->BSET = (1u << 11);
+    }
+#endif
+
     // Enable RGB output
-    if (enable_pwm_output) {
+    if (enable_pwm_output
+#if defined(XINGMENG_M87_STRIP_MIRROR)
+        || sidelight_enabled || lightbar_enabled
+#endif
+    ) {
 #    if (SN32F2XX_RGB_OUTPUT_ACTIVE_LEVEL == SN32F2XX_RGB_OUTPUT_ACTIVE_HIGH)
         gpio_write_pin_high(led_row_pins[current_row]);
 #    elif (SN32F2XX_RGB_OUTPUT_ACTIVE_LEVEL == SN32F2XX_RGB_OUTPUT_ACTIVE_LOW)
@@ -581,6 +637,13 @@ void sn32f2xx_init(void) {
         gpio_write_pin_high(led_row_pins[x]);
 #endif // SN32F2XX_RGB_OUTPUT_ACTIVE_LEVEL
     }
+#if defined(XINGMENG_M87_STRIP_MIRROR)
+    // Kéo High trước khi bật Output để chống nháy sáng (glitch) lúc khởi động
+    SN_GPIO1->BSET = (1u << 6) | (1u << 9) | (1u << 11);
+    gpio_set_pin_output_push_pull(B6);
+    gpio_set_pin_output_push_pull(B9);
+    gpio_set_pin_output_push_pull(B11);
+#endif
 
     // Determine which PWM channels we need to control
 #if (defined(SN32F240B) || defined(SN32F240C))
