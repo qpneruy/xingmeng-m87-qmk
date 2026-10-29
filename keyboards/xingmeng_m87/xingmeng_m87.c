@@ -27,20 +27,16 @@ static const uint8_t led_dist_f8[88] = {
     185
 };
 
-/* Cosine bell curve table: cos^2(x * pi / 2) for x in 0..1 (32 entries, values 255..0) */
-static const uint8_t cos2_lut[32] = {
-    255, 254, 252, 249, 245, 239, 232, 224,
-    215, 206, 195, 184, 172, 159, 147, 134,
-    121, 108,  96,  83,  71,  60,  49,  40,
-     31,  23,  16,  10,   6,   3,   1,   0
-};
-
-/* Trailing persistence decay table: exp(-i / 8) * 0.35 * 255 (32 entries, values 89..2) */
-static const uint8_t trail_lut[32] = {
-    89, 79, 70, 61, 54, 48, 42, 37,
-    33, 29, 26, 23, 20, 18, 16, 14,
-    12, 11,  9,  8,  7,  6,  6,  5,
-     4,  4,  3,  3,  3,  2,  2,  2
+/* Shockwave crater radial decay table: 255 * exp(-i / 14.0) (64 entries, values 255..3) */
+static const uint8_t crater_decay_lut[64] = {
+    255, 237, 221, 206, 192, 178, 166, 155,
+    144, 134, 125, 116, 108, 101,  94,  87,
+     81,  76,  70,  66,  61,  57,  53,  49,
+     46,  43,  40,  37,  35,  32,  30,  28,
+     26,  24,  22,  21,  19,  18,  17,  16,
+     15,  14,  13,  12,  11,  10,  10,   9,
+      8,   8,   7,   7,   6,   6,   5,   5,
+      5,   4,   4,   4,   4,   3,   3,   3
 };
 
 void power_on_wave_start(void) {
@@ -86,46 +82,58 @@ static void power_on_wave_render(uint8_t led_min, uint8_t led_max) {
         burst_intensity = (uint8_t)(255 - ((burst_elapsed * 255) / WAVE_DURATION_BURST));
     }
 
-    const uint8_t wave_thickness = 45;
-
     for (uint8_t i = led_min; i < led_max; i++) {
+        uint8_t intensity = 0;
+        uint8_t d         = led_dist_f8[i];
+
         if (phase == 3) {
             /* Focal absorption burst at F8 (Index 8) */
             if (i == 8) {
-                rgb_matrix_set_color(8, 0, burst_intensity, (uint8_t)(((uint16_t)burst_intensity * 136) >> 8));
+                intensity = burst_intensity;
+            }
+        } else if (phase == 0 || phase == 1) {
+            /* Outward Expansion & Crest */
+            if (d > radius + 10) {
+                intensity = 0;
+            } else if (d > radius) {
+                uint8_t ahead = d - radius;
+                intensity     = 255 - (ahead * 25);
             } else {
-                rgb_matrix_set_color(i, 0, 0, 0);
+                /* Crater wake: smooth gradient left behind the wavefront */
+                uint8_t dist_behind = radius - d;
+                uint8_t k           = dist_behind >> 2;
+                intensity           = (k < 64) ? crater_decay_lut[k] : 0;
             }
-            continue;
-        }
-
-        uint8_t d     = led_dist_f8[i];
-        uint8_t delta = (d > radius) ? (d - radius) : (radius - d);
-        uint8_t intensity = 0;
-
-        if (delta < wave_thickness) {
-            uint8_t idx = (uint8_t)(((uint16_t)delta * 31) / wave_thickness);
-            intensity   = cos2_lut[idx];
-        }
-
-        /* Trailing persistence */
-        if (phase == 0 && radius > d) {
-            uint8_t trail_d = (radius - d) / 3;
-            if (trail_d < 32 && trail_lut[trail_d] > intensity) {
-                intensity = trail_lut[trail_d];
-            }
-        } else if (phase == 2 && radius < d) {
-            uint8_t trail_d = (d - radius) / 3;
-            if (trail_d < 32 && trail_lut[trail_d] > intensity) {
-                intensity = trail_lut[trail_d];
+        } else if (phase == 2) {
+            /* Rewind / Inward Contraction */
+            if (d < radius) {
+                uint8_t dist_in = radius - d;
+                uint8_t k       = dist_in >> 2;
+                uint8_t base    = (k < 64) ? crater_decay_lut[k] : 0;
+                intensity       = (uint8_t)(((uint16_t)base * 70) >> 8);
+            } else if (d < radius + 10) {
+                uint8_t ahead = d - radius;
+                intensity     = 255 - (ahead * 25);
+            } else {
+                uint8_t dist_behind = d - radius;
+                uint8_t k           = dist_behind >> 2;
+                intensity           = (k < 64) ? crater_decay_lut[k] : 0;
             }
         }
 
-        if (intensity > 4) {
-            /* Emerald neon: R = 0, G = 255, B = 136 */
+        if (intensity > 3) {
+            /* Dynamic Plasma-Emerald energy: Leading crest has radiant white-cyan core */
+            uint8_t r = 0;
             uint8_t g = (uint8_t)(((uint16_t)intensity * 255) >> 8);
             uint8_t b = (uint8_t)(((uint16_t)intensity * 136) >> 8);
-            rgb_matrix_set_color(i, 0, g, b);
+
+            if (intensity > 200) {
+                uint8_t  boost   = intensity - 200;
+                uint16_t b_boost = (uint16_t)b + boost;
+                r                = (uint8_t)(boost * 2);
+                b                = (b_boost > 255) ? 255 : (uint8_t)b_boost;
+            }
+            rgb_matrix_set_color(i, r, g, b);
         } else {
             rgb_matrix_set_color(i, 0, 0, 0);
         }
