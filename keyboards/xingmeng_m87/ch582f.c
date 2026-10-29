@@ -539,6 +539,7 @@ void ch582f_task(void) {
             m87_mode_t new_mode = (current_raw & 1) ? M87_MODE_BT : ((current_raw & 2) ? M87_MODE_24G : M87_MODE_WIRED);
             if (new_mode != current_mode) {
                 ch582f_set_mode(new_mode);
+                power_on_wave_start();
             }
         }
     }

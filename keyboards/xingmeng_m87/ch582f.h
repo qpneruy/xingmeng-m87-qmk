@@ -50,3 +50,5 @@ bool ch582f_is_connected(void);
 uint32_t ch582f_get_connected_time(void);
 void ch582f_set_os_mode(bool is_windows);
 bool ch582f_process_record(uint16_t keycode, keyrecord_t *record);
+void power_on_wave_start(void);
+bool power_on_wave_is_active(void);
