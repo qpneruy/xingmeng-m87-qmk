@@ -27,17 +27,6 @@ static const uint8_t led_dist_f8[88] = {
     185
 };
 
-/* Shockwave crater radial decay table: 255 * exp(-i / 14.0) (64 entries, values 255..3) */
-static const uint8_t crater_decay_lut[64] = {
-    255, 237, 221, 206, 192, 178, 166, 155,
-    144, 134, 125, 116, 108, 101,  94,  87,
-     81,  76,  70,  66,  61,  57,  53,  49,
-     46,  43,  40,  37,  35,  32,  30,  28,
-     26,  24,  22,  21,  19,  18,  17,  16,
-     15,  14,  13,  12,  11,  10,  10,   9,
-      8,   8,   7,   7,   6,   6,   5,   5,
-      5,   4,   4,   4,   4,   3,   3,   3
-};
 
 void power_on_wave_start(void) {
     wave_start_time = timer_read32();
@@ -67,107 +56,133 @@ static void power_on_wave_render(uint8_t led_min, uint8_t led_max) {
         return;
     }
 
-    // Đồng bộ theo độ sáng cài đặt của bàn phím (giữ mức sàn 130 để luôn rực rỡ lúc khởi động)
     uint8_t max_val = rgb_matrix_get_val();
     if (max_val < 130) {
         max_val = 130;
     }
 
-    uint8_t phase         = 0;
-    uint8_t radius        = 0;
-    uint8_t reveal_radius = 0;
-    uint8_t charge_val    = 0;
+    uint8_t  phase         = 0;
+    uint16_t radius        = 0;
+    uint8_t  reveal_radius = 0;
+    uint8_t  charge_val    = 0;
 
     if (elapsed < WAVE_DURATION_CHARGE) {
-        // PHA 0: Tụ nhiệt tại tâm F8 (0 -> 255)
+        // PHA 0: Tụ năng lượng tại F8 (0 -> 255)
         phase      = 0;
         charge_val = (uint8_t)((elapsed * 255) / WAVE_DURATION_CHARGE);
     } else if (elapsed < (WAVE_DURATION_CHARGE + WAVE_DURATION_EXPAND)) {
-        // PHA 1: Bung sóng xung kích với gia tốc Ease-Out Quadratic
+        // PHA 1: Bung sóng đa tầng từ 0 -> 250 (Ease-Out)
         phase                = 1;
         uint32_t exp_elapsed = elapsed - WAVE_DURATION_CHARGE;
         uint16_t t           = (uint16_t)((exp_elapsed << 8) / WAVE_DURATION_EXPAND);
         uint16_t inv_t       = 255 - t;
         uint16_t ease_out    = 255 - ((inv_t * inv_t) >> 8);
-        radius               = (uint8_t)((ease_out * 245) >> 8);
+        radius               = (ease_out * 250) >> 8;
     } else {
-        // PHA 2: Quét mở khóa hiệu ứng chính từ F8 ra ngoài (Ease-Out nhẹ)
+        // PHA 2: Sóng nền vẫn trôi nhẹ ra ngoài (250 -> 310) trong khi Viền Vàng quét mở khóa
         phase                = 2;
         uint32_t rev_elapsed = elapsed - (WAVE_DURATION_CHARGE + WAVE_DURATION_EXPAND);
         uint16_t t           = (uint16_t)((rev_elapsed << 8) / WAVE_DURATION_REVEAL);
         uint16_t inv_t       = 255 - t;
         uint16_t ease_out    = 255 - ((inv_t * inv_t) >> 8);
+        radius               = 250 + ((t * 60) >> 8);
         reveal_radius        = (uint8_t)((ease_out * 245) >> 8);
     }
 
     for (uint8_t i = led_min; i < led_max; i++) {
-        uint8_t d         = led_dist_f8[i];
-        uint8_t intensity = 0;
+        uint8_t d = led_dist_f8[i];
+        uint8_t r = 0, g = 0, b = 0;
 
         if (phase == 0) {
+            // Pha 0: Nung lõi F8 từ Xanh Băng -> Trắng Vàng
+            uint8_t intensity = 0;
             if (d == 0) {
                 intensity = charge_val;
             } else if (d < 42) {
-                // Lan nhiệt nhẹ ra các phím sát F8 (F7, F9, 7, 8, 9)
                 intensity = (uint8_t)(((uint16_t)charge_val * (42 - d)) >> 6);
             }
             if (intensity == 0) {
                 rgb_matrix_set_color(i, 0, 0, 0);
                 continue;
             }
-        } else if (phase == 1) {
-            if (d > radius + 12) {
-                // Sóng chưa chạm tới -> Giữ phím tối đen
+            r = intensity;
+            g = intensity;
+            b = (intensity > 128) ? 255 : (intensity << 1);
+        } else {
+            // Nếu ở Pha 2 và vòng mở khóa đã đi qua -> Nhường chỗ cho Hiệu ứng chính!
+            if (phase == 2 && d < reveal_radius) {
+                continue;
+            }
+
+            if (d > radius + 14) {
+                // Sóng chưa chạm tới -> Tắt đen
                 rgb_matrix_set_color(i, 0, 0, 0);
                 continue;
             } else if (d > radius) {
-                // Mép trước của sóng: Cực đại năng lượng (Trắng-Xanh -> Vàng)
-                intensity = 255 - ((d - radius) * 21);
+                // Mép trước của sóng (Leading Edge): Lóe sáng Trắng-Vàng
+                uint8_t ahead = (uint8_t)(d - radius); // 1..14
+                uint8_t fade  = 255 - (ahead * 18);
+                r = fade;
+                g = (uint8_t)(((uint16_t)fade * 240) >> 8);
+                b = (uint8_t)(((uint16_t)fade * 180) >> 8);
             } else {
-                // Đuôi sóng: Hạ nhiệt dần về nền Tím Tinh Vân (intensity = 75)
-                uint8_t k     = (radius - d) >> 2;
-                uint8_t decay = (k < 64) ? crater_decay_lut[k] : 0;
-                intensity     = (decay > 75) ? decay : 75;
+                /* ----------------------------------------------------------------
+                 * ĐUÔI SÓNG ĐA TẦNG (Dựa vào khoảng cách sau đỉnh sóng: dist_behind)
+                 * Không còn bị đọng ở màu Tím Đỏ mà chuyển mượt qua 4 vòng năng lượng:
+                 * - Vòng 1 (0..35)   : Trắng Vàng -> Vàng Mặt Trời (Solar Gold)
+                 * - Vòng 2 (36..83)  : Cam Lửa -> Dải Hồng Neon mỏng (Cyber Coral)
+                 * - Vòng 3 (84..147) : Tím Điện -> Xanh Dương Vũ Trụ (Electric Blue)
+                 * - Vòng 4 (> 147)   : Xanh Băng / Ngọc Bích (Ice Cyan Core)
+                 * ---------------------------------------------------------------- */
+                uint16_t dist_behind = radius - d;
+
+                if (dist_behind <= 35) {
+                    // Vòng 1: Dải Trắng Vàng -> Vàng Cam dày và rực
+                    uint8_t p = (uint8_t)dist_behind; // 0..35
+                    r = 255;
+                    g = 245 - (p * 3);                // 245 -> 140
+                    b = (p < 32) ? (192 - (p * 6)) : 0;
+                } else if (dist_behind <= 83) {
+                    // Vòng 2: Cam Lửa lướt nhanh qua Hồng Neon
+                    uint8_t p = (uint8_t)(dist_behind - 36); // 0..47
+                    r = 255 - (p >> 1);               // 255 -> 232
+                    g = (p < 46) ? (140 - (p * 3)) : 0;
+                    b = p * 3;                        // 0 -> 141
+                } else if (dist_behind <= 147) {
+                    // Vòng 3: Chuyển từ Hồng Tím sang Xanh Dương Vũ Trụ (Cyber Blue)
+                    uint8_t p = (uint8_t)(dist_behind - 84); // 0..63
+                    r = (p < 58) ? (232 - (p << 2)) : 0;
+                    g = p << 1;                       // 0 -> 126
+                    b = 141 + p + (p >> 1);           // 141 -> 235
+                } else {
+                    // Vòng 4: Mặt hồ Xanh Băng (Ice Cyan) lan ra từ tâm F8
+                    uint16_t p = dist_behind - 148;
+                    if (p > 63) {
+                        p = 63;
+                    }
+                    r = 0;
+                    g = (uint8_t)(126 + p + (p >> 1)); // 126 -> 220 (Cyan sáng dịu)
+                    b = (uint8_t)(235 - (p >> 1));     // 235 -> 204
+                }
             }
-        } else {
-            if (d < reveal_radius) {
-                // Vòng mở khóa đã đi qua -> Bỏ qua để HIỆU ỨNG CHÍNH TỰ NỔI LÊN!
-                continue;
-            } else if (d < reveal_radius + 24) {
-                // Viền lửa Vàng Cam (intensity 75..171) "đốt" lớp nền Tím để mở khóa
-                uint8_t rim = 24 - (d - reveal_radius);
-                intensity   = 75 + (rim << 2);
-            } else {
-                // Vùng chưa mở khóa: Giữ nguyên thảm màu Tím Tinh Vân
-                intensity = 75;
+
+            // PHA 2: Hòa trộn (Alpha-Blend) Viền Lửa Vàng (Solar Gold Rim) đè lên nền Xanh Băng
+            if (phase == 2 && d < reveal_radius + 28) {
+                uint8_t rim   = 28 - (d - reveal_radius); // 1..28 (Càng sát mép mở khóa càng rực)
+                uint8_t alpha = rim * 9;                  // Trọng số hòa trộn: 9..252
+                uint8_t inv_a = 255 - alpha;
+
+                // Màu của Viền Lửa Mở Khóa: Vàng Cam rực + Lõi Trắng ở sát mép trong
+                uint8_t rim_g = 195 + (rim << 1);
+                uint8_t rim_b = (rim > 18) ? ((rim - 18) * 22) : 0;
+
+                r = (uint8_t)(((uint16_t)r * inv_a + (uint16_t)255 * alpha) >> 8);
+                g = (uint8_t)(((uint16_t)g * inv_a + (uint16_t)rim_g * alpha) >> 8);
+                b = (uint8_t)(((uint16_t)b * inv_a + (uint16_t)rim_b * alpha) >> 8);
             }
         }
 
-        /* -------------------------------------------------------------------
-         * BẢNG MÀU NHIỆT ĐỘ SIÊU TÂN TINH (Liên tục 100%, không bị gãy màu)
-         * - Zone 1 (0..96)   : Đỏ Rượu / Tím Tinh Vân (Deep Crimson-Violet)
-         * - Zone 2 (96..192) : Lửa Đỏ Cam -> Vàng Mặt Trời (Solar Gold)
-         * - Zone 3 (192..255): Lõi Trắng Xanh (Supernova Blue-White Core)
-         * ------------------------------------------------------------------- */
-        uint8_t r, g, b;
-        if (intensity <= 96) {
-            r = intensity << 1;                               // 0 .. 192
-            g = 0;                                            // 0
-            b = (uint8_t)(((uint16_t)intensity * 170) >> 8); // 0 .. 64
-        } else if (intensity <= 192) {
-            uint8_t delta = intensity - 96;                           // 0 .. 96
-            uint8_t shift = (uint8_t)(((uint16_t)delta * 170) >> 8);  // 0 .. 63
-            r             = 192 + shift;                              // 192 .. 255
-            g             = delta << 1;                               // 0 .. 192
-            b             = 64 - shift;                               // 64 .. 1
-        } else {
-            uint8_t core = intensity - 192; // 0 .. 63
-            r            = 255;             // 255
-            g            = 192 + core;      // 192 .. 255
-            b            = core << 2;       // 0 .. 252
-        }
-
-        // Scale theo độ sáng hệ thống bằng dịch bit
+        // Scale độ sáng cuối cùng theo cấu hình bàn phím
         r = (uint8_t)(((uint16_t)r * max_val) >> 8);
         g = (uint8_t)(((uint16_t)g * max_val) >> 8);
         b = (uint8_t)(((uint16_t)b * max_val) >> 8);
