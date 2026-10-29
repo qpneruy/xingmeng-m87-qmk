@@ -7,10 +7,10 @@ bool sidelight_enabled = true;
 bool lightbar_enabled  = true;
 bool keylight_enabled  = true;
 static uint32_t battery_show_timer = 0;
-// Thời lượng 3 pha của vụ nổ Supernova (Tổng: 2000ms)
-#define WAVE_DURATION_CHARGE  300   // Nung nóng lõi tại F8
-#define WAVE_DURATION_EXPAND  1000  // Sóng Siêu Tân Tinh bung ra toàn phím
-#define WAVE_DURATION_REVEAL  700   // Viền lửa vàng quét mở khóa hiệu ứng chính
+// Thời lượng chuẩn hóa theo lũy thừa nhị phân để triệt tiêu 100% phép chia (Tổng: 2048ms)
+#define WAVE_DURATION_CHARGE  256   // 2^8 ms  -> Copy trực tiếp byte thấp
+#define WAVE_DURATION_EXPAND  1024  // 2^10 ms -> Dịch phải 2 bit (>> 2)
+#define WAVE_DURATION_REVEAL  768   // 3 * 256 ms -> Nhân nghịch đảo (* 85 >> 8)
 #define WAVE_DURATION_TOTAL   (WAVE_DURATION_CHARGE + WAVE_DURATION_EXPAND + WAVE_DURATION_REVEAL)
 
 static uint32_t wave_start_time = 0;
@@ -44,13 +44,13 @@ bool power_on_wave_is_active(void) {
     return true;
 }
 
-static void power_on_wave_render(uint8_t led_min, uint8_t led_max) {
+static void power_on_wave_render(uint8_t led_min, uint8_t led_max, uint32_t now) {
     if (!keylight_enabled) {
         wave_active = false;
         return;
     }
 
-    uint32_t elapsed = timer_elapsed32(wave_start_time);
+    uint32_t elapsed = now - wave_start_time;
     if (elapsed >= WAVE_DURATION_TOTAL) {
         wave_active = false;
         return;
@@ -61,28 +61,44 @@ static void power_on_wave_render(uint8_t led_min, uint8_t led_max) {
         max_val = 130;
     }
 
-    uint8_t  phase         = 0;
+    // -------------------------------------------------------------------------
+    // NHÁNH RIÊNG CHO PHA 0 (0..255ms): Không bắt 88 LED phải check if (phase == 0)
+    // -------------------------------------------------------------------------
+    if (elapsed < WAVE_DURATION_CHARGE) {
+        uint8_t charge_val = (uint8_t)elapsed; // 0..255 (0 CPU cycle)
+        for (uint8_t i = led_min; i < led_max; i++) {
+            uint8_t d = led_dist_f8[i];
+            if (d >= 42) {
+                rgb_matrix_set_color(i, 0, 0, 0);
+                continue;
+            }
+            uint8_t intensity = (d == 0) ? charge_val : (uint8_t)(((uint16_t)charge_val * (42 - d)) >> 6);
+            uint8_t r         = (uint8_t)(((uint16_t)intensity * max_val) >> 8);
+            uint8_t b_raw     = (intensity > 127) ? 255 : (intensity << 1);
+            uint8_t b         = (uint8_t)(((uint16_t)b_raw * max_val) >> 8);
+            rgb_matrix_set_color(i, r, r, b);
+        }
+        return;
+    }
+
+    // -------------------------------------------------------------------------
+    // TÍNH THÔNG SỐ CHO PHA 1 & PHA 2 (0% Phép chia)
+    // -------------------------------------------------------------------------
+    bool     is_phase2     = false;
     uint16_t radius        = 0;
     uint8_t  reveal_radius = 0;
-    uint8_t  charge_val    = 0;
 
-    if (elapsed < WAVE_DURATION_CHARGE) {
-        // PHA 0: Tụ năng lượng tại F8 (0 -> 255)
-        phase      = 0;
-        charge_val = (uint8_t)((elapsed * 255) / WAVE_DURATION_CHARGE);
-    } else if (elapsed < (WAVE_DURATION_CHARGE + WAVE_DURATION_EXPAND)) {
-        // PHA 1: Bung sóng đa tầng từ 0 -> 250 (Ease-Out)
-        phase                = 1;
-        uint32_t exp_elapsed = elapsed - WAVE_DURATION_CHARGE;
-        uint16_t t           = (uint16_t)((exp_elapsed << 8) / WAVE_DURATION_EXPAND);
-        uint16_t inv_t       = 255 - t;
-        uint16_t ease_out    = 255 - ((inv_t * inv_t) >> 8);
-        radius               = (ease_out * 250) >> 8;
+    if (elapsed < (WAVE_DURATION_CHARGE + WAVE_DURATION_EXPAND)) {
+        // PHA 1: exp_elapsed chạy 0..1023 -> dịch phải 2 bit ra 0..255
+        uint16_t t        = (uint16_t)((elapsed - WAVE_DURATION_CHARGE) >> 2);
+        uint16_t inv_t    = 255 - t;
+        uint16_t ease_out = 255 - ((inv_t * inv_t) >> 8);
+        radius            = (ease_out * 250) >> 8;
     } else {
-        // PHA 2: Sóng nền vẫn trôi nhẹ ra ngoài (250 -> 310) trong khi Viền Vàng quét mở khóa
-        phase                = 2;
+        // PHA 2: rev_elapsed chạy 0..767 -> nhân 85 >> 8 tương đương chia 3 (ra 0..254)
+        is_phase2            = true;
         uint32_t rev_elapsed = elapsed - (WAVE_DURATION_CHARGE + WAVE_DURATION_EXPAND);
-        uint16_t t           = (uint16_t)((rev_elapsed << 8) / WAVE_DURATION_REVEAL);
+        uint16_t t           = (uint16_t)((rev_elapsed * 85) >> 8);
         uint16_t inv_t       = 255 - t;
         uint16_t ease_out    = 255 - ((inv_t * inv_t) >> 8);
         radius               = 250 + ((t * 60) >> 8);
@@ -91,98 +107,75 @@ static void power_on_wave_render(uint8_t led_min, uint8_t led_max) {
 
     for (uint8_t i = led_min; i < led_max; i++) {
         uint8_t d = led_dist_f8[i];
-        uint8_t r = 0, g = 0, b = 0;
 
-        if (phase == 0) {
-            // Pha 0: Nung lõi F8 từ Xanh Băng -> Trắng Vàng
-            uint8_t intensity = 0;
-            if (d == 0) {
-                intensity = charge_val;
-            } else if (d < 42) {
-                intensity = (uint8_t)(((uint16_t)charge_val * (42 - d)) >> 6);
-            }
-            if (intensity == 0) {
-                rgb_matrix_set_color(i, 0, 0, 0);
-                continue;
-            }
-            r = intensity;
-            g = intensity;
-            b = (intensity > 128) ? 255 : (intensity << 1);
+        // Pha 2: Vùng đã mở khóa -> Bỏ qua ngay lập tức (nhường cho hiệu ứng chính)
+        if (is_phase2 && d < reveal_radius) {
+            continue;
+        }
+
+        // Vùng sóng chưa chạm tới -> Tắt đen (Độ rộng mép trước = 16 để dùng << 4)
+        if (d >= radius + 16) {
+            rgb_matrix_set_color(i, 0, 0, 0);
+            continue;
+        }
+
+        uint8_t r, g, b;
+
+        if (d > radius) {
+            // Mép trước của sóng (ahead: 1..15) -> Dịch bit thuần túy, không nhân
+            uint8_t fade = (uint8_t)((16 - (d - radius)) << 4); // 16..240
+            r            = fade;
+            g            = fade - (fade >> 4); // Xấp xỉ fade * 240 / 256
+            b            = fade - (fade >> 2); // Xấp xỉ fade * 192 / 256
         } else {
-            // Nếu ở Pha 2 và vòng mở khóa đã đi qua -> Nhường chỗ cho Hiệu ứng chính!
-            if (phase == 2 && d < reveal_radius) {
-                continue;
-            }
+            /* ----------------------------------------------------------------
+             * ĐUÔI SÓNG 4 VÒNG CHUẨN HÓA LŨY THỪA 2 (32, 64, 64, 64)
+             * Liên tục 100% tại mọi điểm nối, 0 lệnh rẽ nhánh kẹp biên (clamp)
+             * ---------------------------------------------------------------- */
+            uint16_t dist_behind = radius - d;
 
-            if (d > radius + 14) {
-                // Sóng chưa chạm tới -> Tắt đen
-                rgb_matrix_set_color(i, 0, 0, 0);
-                continue;
-            } else if (d > radius) {
-                // Mép trước của sóng (Leading Edge): Lóe sáng Trắng-Vàng
-                uint8_t ahead = (uint8_t)(d - radius); // 1..14
-                uint8_t fade  = 255 - (ahead * 18);
-                r = fade;
-                g = (uint8_t)(((uint16_t)fade * 240) >> 8);
-                b = (uint8_t)(((uint16_t)fade * 180) >> 8);
+            if (dist_behind < 32) {
+                // Vòng 1 (0..31): Trắng Vàng (252,252,186) -> Vàng Cam (252,128,0)
+                uint8_t p = (uint8_t)dist_behind;
+                r         = 252;
+                g         = 252 - (p << 2);
+                b         = 186 - (p << 2) - (p << 1); // 186 - p * 6
+            } else if (dist_behind < 96) {
+                // Vòng 2 (32..95): Vàng Cam (252,126,0) -> Hồng Neon (252,0,126)
+                uint8_t p = (uint8_t)(dist_behind - 32); // 0..63
+                r         = 252;
+                g         = 126 - (p << 1);
+                b         = p << 1;
+            } else if (dist_behind < 160) {
+                // Vòng 3 (96..159): Hồng Neon (252,0,126) -> Xanh Vũ Trụ (0,126,252)
+                uint8_t p = (uint8_t)(dist_behind - 96); // 0..63
+                r         = (63 - p) << 2;
+                g         = p << 1;
+                b         = 126 + (p << 1);
             } else {
-                /* ----------------------------------------------------------------
-                 * ĐUÔI SÓNG ĐA TẦNG (Dựa vào khoảng cách sau đỉnh sóng: dist_behind)
-                 * Không còn bị đọng ở màu Tím Đỏ mà chuyển mượt qua 4 vòng năng lượng:
-                 * - Vòng 1 (0..35)   : Trắng Vàng -> Vàng Mặt Trời (Solar Gold)
-                 * - Vòng 2 (36..83)  : Cam Lửa -> Dải Hồng Neon mỏng (Cyber Coral)
-                 * - Vòng 3 (84..147) : Tím Điện -> Xanh Dương Vũ Trụ (Electric Blue)
-                 * - Vòng 4 (> 147)   : Xanh Băng / Ngọc Bích (Ice Cyan Core)
-                 * ---------------------------------------------------------------- */
-                uint16_t dist_behind = radius - d;
-
-                if (dist_behind <= 35) {
-                    // Vòng 1: Dải Trắng Vàng -> Vàng Cam dày và rực
-                    uint8_t p = (uint8_t)dist_behind; // 0..35
-                    r = 255;
-                    g = 245 - (p * 3);                // 245 -> 140
-                    b = (p < 32) ? (192 - (p * 6)) : 0;
-                } else if (dist_behind <= 83) {
-                    // Vòng 2: Cam Lửa lướt nhanh qua Hồng Neon
-                    uint8_t p = (uint8_t)(dist_behind - 36); // 0..47
-                    r = 255 - (p >> 1);               // 255 -> 232
-                    g = (p < 46) ? (140 - (p * 3)) : 0;
-                    b = p * 3;                        // 0 -> 141
-                } else if (dist_behind <= 147) {
-                    // Vòng 3: Chuyển từ Hồng Tím sang Xanh Dương Vũ Trụ (Cyber Blue)
-                    uint8_t p = (uint8_t)(dist_behind - 84); // 0..63
-                    r = (p < 58) ? (232 - (p << 2)) : 0;
-                    g = p << 1;                       // 0 -> 126
-                    b = 141 + p + (p >> 1);           // 141 -> 235
-                } else {
-                    // Vòng 4: Mặt hồ Xanh Băng (Ice Cyan) lan ra từ tâm F8
-                    uint16_t p = dist_behind - 148;
-                    if (p > 63) {
-                        p = 63;
-                    }
-                    r = 0;
-                    g = (uint8_t)(126 + p + (p >> 1)); // 126 -> 220 (Cyan sáng dịu)
-                    b = (uint8_t)(235 - (p >> 1));     // 235 -> 204
+                // Vòng 4 (>= 160): Xanh Vũ Trụ (0,126,252) -> Xanh Băng (0,220,221)
+                uint16_t p = dist_behind - 160;
+                if (p > 63) {
+                    p = 63;
                 }
-            }
-
-            // PHA 2: Hòa trộn (Alpha-Blend) Viền Lửa Vàng (Solar Gold Rim) đè lên nền Xanh Băng
-            if (phase == 2 && d < reveal_radius + 28) {
-                uint8_t rim   = 28 - (d - reveal_radius); // 1..28 (Càng sát mép mở khóa càng rực)
-                uint8_t alpha = rim * 9;                  // Trọng số hòa trộn: 9..252
-                uint8_t inv_a = 255 - alpha;
-
-                // Màu của Viền Lửa Mở Khóa: Vàng Cam rực + Lõi Trắng ở sát mép trong
-                uint8_t rim_g = 195 + (rim << 1);
-                uint8_t rim_b = (rim > 18) ? ((rim - 18) * 22) : 0;
-
-                r = (uint8_t)(((uint16_t)r * inv_a + (uint16_t)255 * alpha) >> 8);
-                g = (uint8_t)(((uint16_t)g * inv_a + (uint16_t)rim_g * alpha) >> 8);
-                b = (uint8_t)(((uint16_t)b * inv_a + (uint16_t)rim_b * alpha) >> 8);
+                r = 0;
+                g = (uint8_t)(126 + p + (p >> 1));
+                b = (uint8_t)(252 - (p >> 1));
             }
         }
 
-        // Scale độ sáng cuối cùng theo cấu hình bàn phím
+        // PHA 2: Hòa trộn Viền Lửa Vàng (độ rộng 32 = 2^5) bằng công thức Lerp >> 5
+        if (is_phase2 && d < reveal_radius + 32) {
+            uint8_t rim   = 32 - (d - reveal_radius); // 1..32
+            uint8_t rim_g = 190 + (rim << 1);         // 192..254
+            uint8_t rim_b = (rim > 16) ? ((rim - 16) << 4) : 0;
+
+            r += (uint8_t)(((255 - r) * rim) >> 5);
+            g += (uint8_t)(((int16_t)(rim_g - g) * rim) >> 5);
+            b += (uint8_t)(((int16_t)(rim_b - b) * rim) >> 5);
+        }
+
+        // Scale độ sáng tổng
         r = (uint8_t)(((uint16_t)r * max_val) >> 8);
         g = (uint8_t)(((uint16_t)g * max_val) >> 8);
         b = (uint8_t)(((uint16_t)b * max_val) >> 8);
@@ -261,9 +254,8 @@ bool rgb_matrix_indicators_advanced_kb(uint8_t led_min, uint8_t led_max) {
     }
     uint32_t now = timer_read32();
 
-    // Nếu đang chạy hiệu ứng mở phím -> Vẽ sóng Supernova, tạm ẩn báo Pin
-    if (power_on_wave_is_active()) {
-        power_on_wave_render(led_min, led_max);
+    if (wave_active) {
+        power_on_wave_render(led_min, led_max, now);
     }
     // -------------------------------------------------------------
     // 1. Battery Indicator on Number Row (Keys 1..0: LED indices 17..26)
