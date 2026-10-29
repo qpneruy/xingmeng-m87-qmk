@@ -538,8 +538,11 @@ void ch582f_task(void) {
         if (--switch_debounce_counter == 0) {
             m87_mode_t new_mode = (current_raw & 1) ? M87_MODE_BT : ((current_raw & 2) ? M87_MODE_24G : M87_MODE_WIRED);
             if (new_mode != current_mode) {
+                bool was_wired = (current_mode == M87_MODE_WIRED);
                 ch582f_set_mode(new_mode);
-                power_on_wave_start();
+                if (was_wired && new_mode != M87_MODE_WIRED) {
+                    power_on_wave_start();
+                }
             }
         }
     }

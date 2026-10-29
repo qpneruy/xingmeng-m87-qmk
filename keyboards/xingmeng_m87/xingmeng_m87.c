@@ -7,11 +7,11 @@ bool sidelight_enabled = true;
 bool lightbar_enabled  = true;
 bool keylight_enabled  = true;
 static uint32_t battery_show_timer = 0;
-#define WAVE_DURATION_OUTWARD 1350
-#define WAVE_DURATION_CREST   180
-#define WAVE_DURATION_REWIND  1350
-#define WAVE_DURATION_BURST   300
-#define WAVE_DURATION_TOTAL   (WAVE_DURATION_OUTWARD + WAVE_DURATION_CREST + WAVE_DURATION_REWIND + WAVE_DURATION_BURST)
+// Thời lượng 3 pha của vụ nổ Supernova (Tổng: 2000ms)
+#define WAVE_DURATION_CHARGE  300   // Nung nóng lõi tại F8
+#define WAVE_DURATION_EXPAND  1000  // Sóng Siêu Tân Tinh bung ra toàn phím
+#define WAVE_DURATION_REVEAL  700   // Viền lửa vàng quét mở khóa hiệu ứng chính
+#define WAVE_DURATION_TOTAL   (WAVE_DURATION_CHARGE + WAVE_DURATION_EXPAND + WAVE_DURATION_REVEAL)
 
 static uint32_t wave_start_time = 0;
 static bool     wave_active     = false;
@@ -56,87 +56,123 @@ bool power_on_wave_is_active(void) {
 }
 
 static void power_on_wave_render(uint8_t led_min, uint8_t led_max) {
+    if (!keylight_enabled) {
+        wave_active = false;
+        return;
+    }
+
     uint32_t elapsed = timer_elapsed32(wave_start_time);
     if (elapsed >= WAVE_DURATION_TOTAL) {
         wave_active = false;
         return;
     }
 
-    uint8_t radius = 0;
-    uint8_t phase  = 0; /* 0 = outward, 1 = crest, 2 = rewind, 3 = burst */
-    uint8_t burst_intensity = 0;
+    // Đồng bộ theo độ sáng cài đặt của bàn phím (giữ mức sàn 130 để luôn rực rỡ lúc khởi động)
+    uint8_t max_val = rgb_matrix_get_val();
+    if (max_val < 130) {
+        max_val = 130;
+    }
 
-    if (elapsed < WAVE_DURATION_OUTWARD) {
-        phase  = 0;
-        radius = (uint8_t)(((uint32_t)elapsed * 240) / WAVE_DURATION_OUTWARD);
-    } else if (elapsed < (WAVE_DURATION_OUTWARD + WAVE_DURATION_CREST)) {
-        phase  = 1;
-        radius = 240;
-    } else if (elapsed < (WAVE_DURATION_OUTWARD + WAVE_DURATION_CREST + WAVE_DURATION_REWIND)) {
-        phase  = 2;
-        uint32_t rewind_elapsed = elapsed - (WAVE_DURATION_OUTWARD + WAVE_DURATION_CREST);
-        radius = (uint8_t)(240 - ((rewind_elapsed * 240) / WAVE_DURATION_REWIND));
+    uint8_t phase         = 0;
+    uint8_t radius        = 0;
+    uint8_t reveal_radius = 0;
+    uint8_t charge_val    = 0;
+
+    if (elapsed < WAVE_DURATION_CHARGE) {
+        // PHA 0: Tụ nhiệt tại tâm F8 (0 -> 255)
+        phase      = 0;
+        charge_val = (uint8_t)((elapsed * 255) / WAVE_DURATION_CHARGE);
+    } else if (elapsed < (WAVE_DURATION_CHARGE + WAVE_DURATION_EXPAND)) {
+        // PHA 1: Bung sóng xung kích với gia tốc Ease-Out Quadratic
+        phase                = 1;
+        uint32_t exp_elapsed = elapsed - WAVE_DURATION_CHARGE;
+        uint16_t t           = (uint16_t)((exp_elapsed << 8) / WAVE_DURATION_EXPAND);
+        uint16_t inv_t       = 255 - t;
+        uint16_t ease_out    = 255 - ((inv_t * inv_t) >> 8);
+        radius               = (uint8_t)((ease_out * 245) >> 8);
     } else {
-        phase = 3;
-        uint32_t burst_elapsed = elapsed - (WAVE_DURATION_OUTWARD + WAVE_DURATION_CREST + WAVE_DURATION_REWIND);
-        burst_intensity = (uint8_t)(255 - ((burst_elapsed * 255) / WAVE_DURATION_BURST));
+        // PHA 2: Quét mở khóa hiệu ứng chính từ F8 ra ngoài (Ease-Out nhẹ)
+        phase                = 2;
+        uint32_t rev_elapsed = elapsed - (WAVE_DURATION_CHARGE + WAVE_DURATION_EXPAND);
+        uint16_t t           = (uint16_t)((rev_elapsed << 8) / WAVE_DURATION_REVEAL);
+        uint16_t inv_t       = 255 - t;
+        uint16_t ease_out    = 255 - ((inv_t * inv_t) >> 8);
+        reveal_radius        = (uint8_t)((ease_out * 245) >> 8);
     }
 
     for (uint8_t i = led_min; i < led_max; i++) {
-        uint8_t intensity = 0;
         uint8_t d         = led_dist_f8[i];
+        uint8_t intensity = 0;
 
-        if (phase == 3) {
-            /* Focal absorption burst at F8 (Index 8) */
-            if (i == 8) {
-                intensity = burst_intensity;
+        if (phase == 0) {
+            if (d == 0) {
+                intensity = charge_val;
+            } else if (d < 42) {
+                // Lan nhiệt nhẹ ra các phím sát F8 (F7, F9, 7, 8, 9)
+                intensity = (uint8_t)(((uint16_t)charge_val * (42 - d)) >> 6);
             }
-        } else if (phase == 0 || phase == 1) {
-            /* Outward Expansion & Crest */
-            if (d > radius + 10) {
-                intensity = 0;
+            if (intensity == 0) {
+                rgb_matrix_set_color(i, 0, 0, 0);
+                continue;
+            }
+        } else if (phase == 1) {
+            if (d > radius + 12) {
+                // Sóng chưa chạm tới -> Giữ phím tối đen
+                rgb_matrix_set_color(i, 0, 0, 0);
+                continue;
             } else if (d > radius) {
-                uint8_t ahead = d - radius;
-                intensity     = 255 - (ahead * 25);
+                // Mép trước của sóng: Cực đại năng lượng (Trắng-Xanh -> Vàng)
+                intensity = 255 - ((d - radius) * 21);
             } else {
-                /* Crater wake: smooth gradient left behind the wavefront */
-                uint8_t dist_behind = radius - d;
-                uint8_t k           = dist_behind >> 2;
-                intensity           = (k < 64) ? crater_decay_lut[k] : 0;
+                // Đuôi sóng: Hạ nhiệt dần về nền Tím Tinh Vân (intensity = 75)
+                uint8_t k     = (radius - d) >> 2;
+                uint8_t decay = (k < 64) ? crater_decay_lut[k] : 0;
+                intensity     = (decay > 75) ? decay : 75;
             }
-        } else if (phase == 2) {
-            /* Rewind / Inward Contraction */
-            if (d < radius) {
-                uint8_t dist_in = radius - d;
-                uint8_t k       = dist_in >> 2;
-                uint8_t base    = (k < 64) ? crater_decay_lut[k] : 0;
-                intensity       = (uint8_t)(((uint16_t)base * 70) >> 8);
-            } else if (d < radius + 10) {
-                uint8_t ahead = d - radius;
-                intensity     = 255 - (ahead * 25);
-            } else {
-                uint8_t dist_behind = d - radius;
-                uint8_t k           = dist_behind >> 2;
-                intensity           = (k < 64) ? crater_decay_lut[k] : 0;
-            }
-        }
-
-        if (intensity > 3) {
-            /* Dynamic Plasma-Emerald energy: Leading crest has radiant white-cyan core */
-            uint8_t r = 0;
-            uint8_t g = (uint8_t)(((uint16_t)intensity * 255) >> 8);
-            uint8_t b = (uint8_t)(((uint16_t)intensity * 136) >> 8);
-
-            if (intensity > 200) {
-                uint8_t  boost   = intensity - 200;
-                uint16_t b_boost = (uint16_t)b + boost;
-                r                = (uint8_t)(boost * 2);
-                b                = (b_boost > 255) ? 255 : (uint8_t)b_boost;
-            }
-            rgb_matrix_set_color(i, r, g, b);
         } else {
-            rgb_matrix_set_color(i, 0, 0, 0);
+            if (d < reveal_radius) {
+                // Vòng mở khóa đã đi qua -> Bỏ qua để HIỆU ỨNG CHÍNH TỰ NỔI LÊN!
+                continue;
+            } else if (d < reveal_radius + 24) {
+                // Viền lửa Vàng Cam (intensity 75..171) "đốt" lớp nền Tím để mở khóa
+                uint8_t rim = 24 - (d - reveal_radius);
+                intensity   = 75 + (rim << 2);
+            } else {
+                // Vùng chưa mở khóa: Giữ nguyên thảm màu Tím Tinh Vân
+                intensity = 75;
+            }
         }
+
+        /* -------------------------------------------------------------------
+         * BẢNG MÀU NHIỆT ĐỘ SIÊU TÂN TINH (Liên tục 100%, không bị gãy màu)
+         * - Zone 1 (0..96)   : Đỏ Rượu / Tím Tinh Vân (Deep Crimson-Violet)
+         * - Zone 2 (96..192) : Lửa Đỏ Cam -> Vàng Mặt Trời (Solar Gold)
+         * - Zone 3 (192..255): Lõi Trắng Xanh (Supernova Blue-White Core)
+         * ------------------------------------------------------------------- */
+        uint8_t r, g, b;
+        if (intensity <= 96) {
+            r = intensity << 1;                               // 0 .. 192
+            g = 0;                                            // 0
+            b = (uint8_t)(((uint16_t)intensity * 170) >> 8); // 0 .. 64
+        } else if (intensity <= 192) {
+            uint8_t delta = intensity - 96;                           // 0 .. 96
+            uint8_t shift = (uint8_t)(((uint16_t)delta * 170) >> 8);  // 0 .. 63
+            r             = 192 + shift;                              // 192 .. 255
+            g             = delta << 1;                               // 0 .. 192
+            b             = 64 - shift;                               // 64 .. 1
+        } else {
+            uint8_t core = intensity - 192; // 0 .. 63
+            r            = 255;             // 255
+            g            = 192 + core;      // 192 .. 255
+            b            = core << 2;       // 0 .. 252
+        }
+
+        // Scale theo độ sáng hệ thống bằng dịch bit
+        r = (uint8_t)(((uint16_t)r * max_val) >> 8);
+        g = (uint8_t)(((uint16_t)g * max_val) >> 8);
+        b = (uint8_t)(((uint16_t)b * max_val) >> 8);
+
+        rgb_matrix_set_color(i, r, g, b);
     }
 }
 
@@ -208,18 +244,16 @@ bool rgb_matrix_indicators_advanced_kb(uint8_t led_min, uint8_t led_max) {
     if (!rgb_matrix_indicators_advanced_user(led_min, led_max)) {
         return false;
     }
-
-    if (power_on_wave_is_active()) {
-        power_on_wave_render(led_min, led_max);
-        return true;
-    }
-
     uint32_t now = timer_read32();
 
+    // Nếu đang chạy hiệu ứng mở phím -> Vẽ sóng Supernova, tạm ẩn báo Pin
+    if (power_on_wave_is_active()) {
+        power_on_wave_render(led_min, led_max);
+    }
     // -------------------------------------------------------------
     // 1. Battery Indicator on Number Row (Keys 1..0: LED indices 17..26)
     // -------------------------------------------------------------
-    if (battery_show_timer != 0) {
+    else if (battery_show_timer != 0) {
         if ((uint32_t)(now - battery_show_timer) < 3000) {
             // Chỉ chạy khi dải render giao cắt với dải LED phím 1..0 (17..26)
             uint8_t start = (led_min > 17) ? led_min : 17;
