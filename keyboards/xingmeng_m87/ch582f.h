@@ -6,6 +6,15 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "quantum.h"
+#include "SN32F240B.h"
+
+// Hardware Pin Bitmasks (Port 0)
+// P0.2 = VBUS, P0.3 = CapsLock, P0.4 = WinLock, P0.6 = 2.4G, P0.7 = BT
+#define MASK_PIN_SWITCH_24G  (1u << 6)
+#define MASK_PIN_SWITCH_BT   (1u << 7)
+#define MASK_PIN_VBUS        (1u << 2)
+#define MASK_LED_CAPS        (1u << 3)
+#define MASK_LED_WINLOCK     (1u << 4)
 
 // Operating Modes (Read from hardware slide switch: Pin 24/A7 & Pin 23/A6)
 typedef enum {
@@ -32,7 +41,8 @@ enum m87_custom_keycodes {
     LIGHTBAR_TOGG,
     BATTERY_LEVEL,
     KEYLIGHT_TOGG,
-    M87_SAFE_RANGE = QK_KB_9
+    M87_OFF,
+    M87_SAFE_RANGE = QK_KB_10
 };
 
 void ch582f_init(void);
@@ -52,3 +62,9 @@ void ch582f_set_os_mode(bool is_windows);
 bool ch582f_process_record(uint16_t keycode, keyrecord_t *record);
 void power_on_wave_start(void);
 bool power_on_wave_is_active(void);
+void power_off_collapse_start(void);
+bool power_off_collapse_is_active(void);
+void ch582f_send_keyboard(report_keyboard_t *report);
+bool m87_is_soft_off(void);
+void m87_enter_soft_off(void);
+void m87_exit_soft_off(void);

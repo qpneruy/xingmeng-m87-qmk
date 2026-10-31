@@ -2,6 +2,18 @@
   "name": "Xingmeng M87",
   "vendorId": "0x0c45",
   "productId": "0x8006",
+  "customKeycodes": [
+    { "name": "BT Profile 1", "title": "M87_BT1", "shortName": "BT1" },
+    { "name": "BT Profile 2", "title": "M87_BT2", "shortName": "BT2" },
+    { "name": "BT Profile 3", "title": "M87_BT3", "shortName": "BT3" },
+    { "name": "2.4G Wireless", "title": "M87_24G", "shortName": "2.4G" },
+    { "name": "Battery Status", "title": "M87_BAT", "shortName": "BAT" },
+    { "name": "Toggle Sidelight", "title": "SIDELIGHT_TOGG", "shortName": "SideLT" },
+    { "name": "Toggle Lightbar Logo", "title": "LIGHTBAR_TOGG", "shortName": "LogoLT" },
+    { "name": "Show Battery Level", "title": "BATTERY_LEVEL", "shortName": "BatLvl" },
+    { "name": "Toggle Keylight", "title": "KEYLIGHT_TOGG", "shortName": "KeyLT" },
+    { "name": "Soft Power Off", "title": "M87_OFF", "shortName": "SoftOff" }
+  ],
   "matrix": {
     "rows": 6,
     "cols": 17

@@ -10,14 +10,6 @@
 #include "wait.h"
 #include "eeconfig.h"
 
-// Hardware Pin Bitmasks (Port 0)
-// P0.2 = VBUS, P0.3 = CapsLock, P0.4 = WinLock, P0.6 = 2.4G, P0.7 = BT
-#define MASK_PIN_SWITCH_24G  (1u << 6)
-#define MASK_PIN_SWITCH_BT   (1u << 7)
-#define MASK_PIN_VBUS        (1u << 2)
-#define MASK_LED_CAPS        (1u << 3)
-#define MASK_LED_WINLOCK     (1u << 4)
-
 // State variables
 static m87_mode_t       current_mode        = M87_MODE_WIRED;
 static m87_bt_profile_t current_bt_profile  = M87_BT_PRF_1;
@@ -32,6 +24,7 @@ static uint8_t          switch_debounce_counter = 0;
 static uint8_t          last_switch_raw     = 0xFF;
 static uint16_t         held_wireless_key   = 0;
 static uint32_t         wireless_key_timer  = 0;
+static keypos_t         held_wireless_pos   = {0, 0};
 static uint8_t          boot_init_state     = 0;
 static uint32_t         boot_time           = 0;
 static uint8_t          last_led_bits       = 0xFF;
@@ -158,10 +151,12 @@ void ch582f_init(void) {
 }
 
 void ch582f_set_mode(m87_mode_t mode) {
+    ch582f_wake_if_needed();
     current_mode = mode;
     is_pairing = false;
     is_connected = false;
     is_sleeping = false;
+    connected_time = timer_read32();
     last_tx_time = timer_read32();
     last_keyboard_rep[0] = 0xFFFFFFFF;
     last_keyboard_rep[1] = 0xFFFFFFFF;
@@ -189,9 +184,11 @@ m87_mode_t ch582f_get_mode(void) {
 }
 
 void ch582f_set_bt_profile(m87_bt_profile_t profile) {
+    ch582f_wake_if_needed();
     current_bt_profile = profile;
     is_pairing = false;
     is_connected = false;
+    connected_time = timer_read32();
 
     if (eeconfig_is_enabled()) {
         uint32_t cfg = (eeconfig_read_kb() & ~0x03) | (profile & 0x03);
@@ -225,7 +222,8 @@ void ch582f_start_pairing(void) {
     uart2_write_buf_fast(name_pkt, 15);
     wait_ms(10);
 
-    uint8_t prof_pkt[3] = {0xA6, (uint8_t)(0x30 + current_bt_profile), (uint8_t)(0xA6 + 0x30 + current_bt_profile)};
+    uint8_t mode_code = (current_mode == M87_MODE_24G) ? 0x30 : (uint8_t)(0x30 + current_bt_profile);
+    uint8_t prof_pkt[3] = {0xA6, mode_code, (uint8_t)(0xA6 + mode_code)};
     uart2_write_buf_fast(prof_pkt, 3);
     wait_ms(20);
     uart2_write_buf_fast(win_pkt, 3);
@@ -271,9 +269,11 @@ void ch582f_set_os_mode(bool is_windows) {
     if (current_mode == M87_MODE_WIRED) {
         return;
     }
+    ch582f_wake_if_needed();
     uint8_t mode = is_windows ? 0x10 : 0x00;
     uint8_t pkt[3] = {0xA5, mode, (uint8_t)(0xA5 + mode)};
     uart2_write_buf_fast(pkt, 3);
+    last_tx_time = timer_read32();
 }
 
 // -------------------------------------------------------------
@@ -354,23 +354,10 @@ static uint8_t ch582f_driver_leds(void) {
 }
 
 static void ch582f_driver_send_keyboard(report_keyboard_t *report) {
-    if (report->keys[0] != 0 || report->mods != 0) {
-        if (!is_connected) {
-            is_connected = true;
-            connected_time = timer_read32();
-        }
-        is_pairing = false;
-    }
     ch582f_send_keyboard(report);
 }
 
 static void ch582f_driver_send_nkro(report_nkro_t *report) {
-    if (!is_connected) {
-        is_connected = true;
-        connected_time = timer_read32();
-    }
-    is_pairing = false;
-
     report_keyboard_t k_report;
     k_report.mods = report->mods;
     k_report.reserved = 0;
@@ -379,7 +366,7 @@ static void ch582f_driver_send_nkro(report_nkro_t *report) {
     static const uint8_t ctz_lut[8] = {0, 1, 6, 2, 7, 5, 4, 3};
 
     uint8_t count = 0;
-    for (uint8_t i = 0; i < 30 && count < 6; i++) {
+    for (uint8_t i = 0; i < sizeof(report->bits) && count < 6; i++) {
         uint8_t b = report->bits[i];
         while (b && count < 6) {
             uint8_t isolated = b & -b;
@@ -474,7 +461,7 @@ static inline void parse_rx_byte(uint8_t b) {
                     is_sleeping = false;
                 }
             } else if (header == 0x5C) {
-                battery_percent = param;
+                battery_percent = (param > 100) ? 100 : param;
                 is_sleeping = false;
             }
         }
@@ -486,7 +473,33 @@ static inline void parse_rx_byte(uint8_t b) {
 // Non-Blocking Periodic Background Task
 // -------------------------------------------------------------
 void ch582f_task(void) {
-    // 0. Synchronize QMK host driver pointer (captures USB driver after protocol_init)
+    // 0. Quét công tắc chế độ trước (dùng chung cho cả Soft-Off và Normal)
+    uint32_t p0 = SN_GPIO0->DATA;
+    uint8_t current_raw = ((!(p0 & MASK_PIN_SWITCH_BT)) ? 1 : 0) | ((!(p0 & MASK_PIN_SWITCH_24G)) ? 2 : 0);
+
+    if (current_raw != last_switch_raw) {
+        switch_debounce_counter = 20;
+        last_switch_raw = current_raw;
+    } else if (switch_debounce_counter > 0 && --switch_debounce_counter == 0) {
+        m87_mode_t new_mode = (current_raw & 1) ? M87_MODE_BT : ((current_raw & 2) ? M87_MODE_24G : M87_MODE_WIRED);
+        if (new_mode != current_mode) {
+            if (m87_is_soft_off()) {
+                m87_exit_soft_off();
+            } else if (current_mode == M87_MODE_WIRED) {
+                power_on_wave_start();
+            }
+            ch582f_set_mode(new_mode);
+        }
+    }
+
+    if (m87_is_soft_off()) {
+        SN_GPIO0->BCLR = MASK_LED_CAPS | MASK_LED_WINLOCK;
+        last_led_bits = 0xFF;
+        held_wireless_key = 0;
+        return;
+    }
+
+    // 1. Synchronize QMK host driver pointer (captures USB driver after protocol_init)
     host_driver_t *cur_drv = host_get_driver();
     if (default_host_driver == NULL && cur_drv != &ch582f_host_driver) {
         default_host_driver = cur_drv;
@@ -496,13 +509,13 @@ void ch582f_task(void) {
         host_set_driver(target_drv);
     }
 
-    // 1. Process UART RX
+    // 2. Process UART RX
     uint8_t rx_b;
     while (uart2_read_byte_fast(&rx_b)) {
         parse_rx_byte(rx_b);
     }
 
-    // 2. Non-blocking Boot Initialization (Zero wait_ms blocking)
+    // 3. Non-blocking Boot Initialization (Zero wait_ms blocking)
     if (boot_init_state < 4) {
         uint32_t elapsed = timer_elapsed32(boot_time);
         if (boot_init_state == 0 && elapsed >= 400) {
@@ -518,32 +531,11 @@ void ch582f_task(void) {
             uart2_write_buf_fast(win_pkt, 3);
             boot_init_state = 3;
         } else if (boot_init_state == 3 && elapsed >= 430) {
-            if (current_mode != M87_MODE_WIRED) {
-                uint8_t code = (current_mode == M87_MODE_24G) ? 0x30 : (0x30 + (uint8_t)current_bt_profile);
-                uint8_t pkt[3] = {0xA6, code, (uint8_t)(0xA6 + code)};
-                uart2_write_buf_fast(pkt, 3);
-            }
+            uint8_t code = (current_mode == M87_MODE_WIRED) ? 0x11 :
+                           ((current_mode == M87_MODE_24G) ? 0x30 : (0x30 + (uint8_t)current_bt_profile));
+            uint8_t pkt[3] = {0xA6, code, (uint8_t)(0xA6 + code)};
+            uart2_write_buf_fast(pkt, 3);
             boot_init_state = 4;
-        }
-    }
-
-    // 3. Port0 direct switch debouncer
-    uint32_t p0 = SN_GPIO0->DATA;
-    uint8_t current_raw = ((!(p0 & MASK_PIN_SWITCH_BT)) ? 1 : 0) | ((!(p0 & MASK_PIN_SWITCH_24G)) ? 2 : 0);
-
-    if (current_raw != last_switch_raw) {
-        switch_debounce_counter = 20;
-        last_switch_raw = current_raw;
-    } else if (switch_debounce_counter > 0) {
-        if (--switch_debounce_counter == 0) {
-            m87_mode_t new_mode = (current_raw & 1) ? M87_MODE_BT : ((current_raw & 2) ? M87_MODE_24G : M87_MODE_WIRED);
-            if (new_mode != current_mode) {
-                bool was_wired = (current_mode == M87_MODE_WIRED);
-                ch582f_set_mode(new_mode);
-                if (was_wired && new_mode != M87_MODE_WIRED) {
-                    power_on_wave_start();
-                }
-            }
         }
     }
 
@@ -563,7 +555,13 @@ void ch582f_task(void) {
             SN_GPIO0->BCLR = MASK_LED_WINLOCK;
         }
     }
-    // 5. Long-press Wireless Key handler
+
+    // 5. Timeout Pairing (3 phút)
+    if (is_pairing && timer_elapsed32(pairing_start_time) >= 180000) {
+        is_pairing = false;
+    }
+
+    // 6. Long-press Wireless Key handler
     if (held_wireless_key != 0) {
         if (timer_elapsed32(wireless_key_timer) >= 3000) {
             if (held_wireless_key == M87_24G) {
@@ -584,12 +582,16 @@ void ch582f_task(void) {
 // Key Process Handler
 // -------------------------------------------------------------
 bool ch582f_process_record(uint16_t keycode, keyrecord_t *record) {
-    if (record->event.pressed && current_mode != M87_MODE_WIRED) {
-        if (!is_connected) {
-            is_connected = true;
-            connected_time = timer_read32();
+    if (m87_is_soft_off()) {
+        return true;
+    }
+
+    // Nhận diện sự kiện nhả phím dù người dùng đã nhả phím Fn trước
+    if (!record->event.pressed && held_wireless_key != 0) {
+        if (record->event.key.row == held_wireless_pos.row &&
+            record->event.key.col == held_wireless_pos.col) {
+            keycode = held_wireless_key;
         }
-        is_pairing = false;
     }
 
     switch (keycode) {
@@ -599,6 +601,7 @@ bool ch582f_process_record(uint16_t keycode, keyrecord_t *record) {
         case M87_24G:
             if (record->event.pressed) {
                 held_wireless_key = keycode;
+                held_wireless_pos = record->event.key;
                 wireless_key_timer = timer_read32();
             } else {
                 if (held_wireless_key != 0) {
@@ -613,8 +616,6 @@ bool ch582f_process_record(uint16_t keycode, keyrecord_t *record) {
                     held_wireless_key = 0;
                 }
             }
-            return false;
-        case M87_BAT:
             return false;
     }
     return true;

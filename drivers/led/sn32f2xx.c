@@ -440,17 +440,25 @@ static void update_pwm_channels(PWMDriver *pwmp) {
         pwmEnableChannel(pwmp, 22, (row_ch == 0) ? l_led.b : ((row_ch == 1) ? l_led.r : l_led.g));
 
         // 2. Right strip (B9 - Channel 1): Col 16, Red & Green swapped
-        uint8_t right_idx = row_map[16];
-        if (current_key_row == 4 || right_idx >= SN32F2XX_LED_COUNT) {
-            right_idx = (current_key_row == 3) ? g_led_config.matrix_co[3][13] : g_led_config.matrix_co[4][15];
-        }
-        if (right_idx < SN32F2XX_LED_COUNT) {
-            RGB r_led = led_state[right_idx];
-            pwmEnableChannel(pwmp, 1, (row_ch == 0) ? r_led.b : ((row_ch == 1) ? r_led.r : r_led.g));
+        RGB r_led;
+        if (current_key_row == 3) {
+            // Hàng 3 không có phím ở mép phải -> Nội suy màu 50/50 giữa PgDn [2,16] và Right Arrow [5,16]
+            uint8_t top_idx = g_led_config.matrix_co[2][16];
+            uint8_t bot_idx = g_led_config.matrix_co[5][16];
+            RGB top = (top_idx < SN32F2XX_LED_COUNT) ? led_state[top_idx] : (RGB){0, 0, 0};
+            RGB bot = (bot_idx < SN32F2XX_LED_COUNT) ? led_state[bot_idx] : (RGB){0, 0, 0};
+
+            r_led.r = (uint8_t)(((uint16_t)top.r + bot.r) >> 1);
+            r_led.g = (uint8_t)(((uint16_t)top.g + bot.g) >> 1);
+            r_led.b = (uint8_t)(((uint16_t)top.b + bot.b) >> 1);
         } else {
-            pwmDisableChannel(pwmp, 1);
-            SN_GPIO1->BSET = (1u << 9);
+            uint8_t right_idx = (current_key_row == 4) ? g_led_config.matrix_co[4][15] : row_map[16];
+            if (right_idx >= SN32F2XX_LED_COUNT) {
+                right_idx = 0;
+            }
+            r_led = led_state[right_idx];
         }
+        pwmEnableChannel(pwmp, 1, (row_ch == 0) ? r_led.b : ((row_ch == 1) ? r_led.r : r_led.g));
     } else {
         pwmDisableChannel(pwmp, 22);
         pwmDisableChannel(pwmp, 1);
